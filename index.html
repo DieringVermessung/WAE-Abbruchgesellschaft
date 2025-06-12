@@ -25,34 +25,36 @@
             text-align:center;
         }
 
-        #tbl-bottom-left{
-            position:absolute;left:25px;bottom:25px;width:500px;cursor:pointer;
-            transition:all .3s;z-index:500;
-        }
+        /* Logo unten rechts */
         #logo-bottom-right{
-            position:absolute;right:25px;bottom:25px;max-height:100px;z-index:500;
-        }
-        #tbl-bottom-left.fullscreen{
-            left:0;right:0;top:0;bottom:0;width:auto;height:auto;margin:auto;
-            background:#fff;box-shadow:0 0 20px rgba(0,0,0,.6);object-fit:contain;
-            cursor:zoom-out;
+            position:absolute;right:25px;bottom:25px;
+            max-height:100px;z-index:500;
         }
         @media(max-width:600px){
-            #tbl-bottom-left{width:200px;}
             #logo-bottom-right{max-height:60px;}
         }
+
+        /* ── Flächen-Summen-Box ── */
+        #area-info{
+            position:absolute;left:10px;bottom:10px;z-index:600;
+            background:rgba(255,255,255,.9);
+            border-radius:4px;padding:6px 10px;
+            font:14px/1.3 sans-serif;min-width:220px;
+        }
+        #area-info ul{margin:0;padding:0;list-style:none;}
+        #area-info li{margin:0 0 2px 0;}
     </style>
 
-    <title>Planungs­flächen – Layer-Toggle</title>
+    <title>Planungs­flächen – Layer-Totals</title>
 </head>
 <body>
 <div id="map"></div>
+<div id="area-info"></div> <!-- Summenbox -->
 
-<!-- Bilder -->
-<img id="tbl-bottom-left"  src="images/tabelle.png"      alt="Flächentabelle">
+<!-- einzig verbleibendes Bild -->
 <img id="logo-bottom-right" src="images/Diering_Logo.png" alt="Firmenlogo">
 
-<!-- ­­­­­­­­­­­­­­­­ Scripte -->
+<!-- ­­­­­­­­­­­­­­­­­ Scripte -->
 <script src="js/qgis2web_expressions.js"></script>
 <script src="js/leaflet.js"></script>
 <script src="js/L.Control.Layers.Tree.min.js"></script>
@@ -76,13 +78,13 @@ function highlightFeature(e){
     highlightLayer = e.target;
     if (e.target.feature.geometry.type === 'LineString'
         || e.target.feature.geometry.type === 'MultiLineString'){
-        highlightLayer.setStyle({ color:'#ffff00' });
+        highlightLayer.setStyle({color:'#ffff00'});
     } else {
-        highlightLayer.setStyle({ fillColor:'#ffff00', fillOpacity:1 });
+        highlightLayer.setStyle({fillColor:'#ffff00',fillOpacity:1});
     }
 }
 
-var map = L.map('map',{ zoomControl:false,maxZoom:28,minZoom:1 })
+var map = L.map('map',{zoomControl:false,maxZoom:28,minZoom:1})
             .fitBounds([[52.502934769508244,14.368519138946045],
                         [52.50388814974424, 14.36942780360909]]);
 new L.Hash(map);
@@ -162,7 +164,7 @@ function style_FleachenEinzeln_2_0(feature){
     }
 }
 
-/* ── Popup-Generator ── */
+/* ── Popup ── */
 function pop_FleachenEinzeln_2(feature,layer){
     layer.on({
         mouseout:function(e){
@@ -191,7 +193,7 @@ function pop_FleachenEinzeln_2(feature,layer){
     layer.bindPopup(content,{maxHeight:400});
 }
 
-/* ── Kategorien definieren ── */
+/* ── Kategorien ── */
 var categories = [
   'frei von Hindernissen',
   'Planung_Hilfskranfläche - vorübergehend ausgebaut',
@@ -203,16 +205,18 @@ var categories = [
   'Überschwenkbereich'
 ];
 
-/* ── Layer-Sammlung aufbauen ── */
-var bounds_group     = new L.featureGroup();
-var categoryLayers   = {};                       // {cat: L.geoJson}
-var labelLayersArr   = [];                       // für resetLabels()
-var overlaysTree     = [
+/* ── Layer-Sammlung & Flächen-Summen ── */
+var bounds_group      = new L.featureGroup();
+var categoryLayers    = {};     // {cat: L.geoJson}
+var labelLayersArr    = [];     // für resetLabels()
+var categoryTotals    = {};     // {cat: Summe Fläche m²}
+var overlaysTree      = [
     {label:'sat',           layer:layer_sat_1,        radioGroup:'bm'},
     {label:'OpenStreetMap', layer:layer_OpenStreetMap_0, radioGroup:'bm'}
 ];
 
 categories.forEach(function(cat){
+    /* Layer je Kategorie */
     var lyr = L.geoJson(json_FleachenEinzeln_2,{
         attribution:'',interactive:true,pane:'pane_FleachenEinzeln_2',
         onEachFeature:pop_FleachenEinzeln_2,
@@ -220,21 +224,28 @@ categories.forEach(function(cat){
         filter:function(feat){return feat.properties['Layer']===cat;}
     });
 
-    /* Tooltip je Feature */
+    /* Tooltip pro Feature & Flächensumme berechnen */
+    var total = 0;
     lyr.eachLayer(function(l){
         var flaeche = l.feature.properties['Fläche'];
         if(flaeche!==null){
             l.bindTooltip(flaeche.toFixed(0)+' m²',{
                 permanent:true,direction:'center',className:'label-inside'
             });
+            total += Number(flaeche);
         }
     });
+    categoryTotals[cat] = total;
 
-    categoryLayers[cat]=lyr;
+    categoryLayers[cat] = lyr;
     labelLayersArr.push(lyr);
-    map.addLayer(lyr);                   // beim Laden sichtbar
+    map.addLayer(lyr);                      // sichtbar bei Kartenstart
     bounds_group.addLayer(lyr);
     overlaysTree.push({label:cat,layer:lyr});
+
+    /* Summen-Box bei Layer-Toggle aktualisieren */
+    lyr.on('add',   updateAreaInfo);
+    lyr.on('remove',updateAreaInfo);
 });
 
 /* ── Layer-Control ── */
@@ -243,15 +254,27 @@ L.control.layers.tree(null,overlaysTree,{collapsed:false}).addTo(map);
 /* ── Zoom auf alle Flächen ── */
 map.fitBounds(bounds_group.getBounds());
 
-/* ── Label-Reset ── */
+/* ── Labels aktualisieren ── */
 resetLabels(labelLayersArr);
 map.on('zoomend',   function(){resetLabels(labelLayersArr);});
 map.on('layeradd',  function(){resetLabels(labelLayersArr);});
 map.on('layerremove',function(){resetLabels(labelLayersArr);});
 
-/* ── Tabelle Bildzoom ── */
-document.getElementById('tbl-bottom-left')
-        .addEventListener('click',function(){this.classList.toggle('fullscreen');});
+/* ── Summen-Box ── */
+function updateAreaInfo(){
+    var html = '<ul>';
+    categories.forEach(function(cat){
+        if(map.hasLayer(categoryLayers[cat])){
+            html += '<li><strong>'+cat+':</strong> '+
+                    categoryTotals[cat].toLocaleString('de-DE')+
+                    '&nbsp;m²</li>';
+        }
+    });
+    html += '</ul>';
+    document.getElementById('area-info').innerHTML =
+        html==='</ul>' ? '' : html;
+}
+updateAreaInfo(); // initialer Aufruf
 
 /* ── Hilfsfunktionen unverändert ── */
 function removeEmptyRowsFromPopupContent(content,feature){
